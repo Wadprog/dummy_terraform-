@@ -1,0 +1,166 @@
+name: Continuos integration
+on:
+  pull_request:
+    branches: [development, master]
+  push:
+    branches: [development, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Running checkout
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v2
+
+      - name: Adding env variable to env files
+        # if: github.event_name == 'pull_request'
+        run: |
+          touch .env
+          echo "ROOT_USER_EMAIL=${{secrets.ROOT_USER_EMAIL}}" >>  .env
+          echo "ROOT_USER_PASSWORD=${{secrets.ROOT_USER_PASSWORD}}" >>  .env
+          echo "ROOT_USER_LAST_NAME=${{secrets.ROOT_USER_LAST_NAME}}" >>  .env
+          echo "ROOT_USER_FIRST_NAME=${{secrets.ROOT_USER_FIRST_NAME}}" >>  .env
+          echo "ROOT_USER_PASSWORD_SECURE=${{secrets.ROOT_USER_PASSWORD_SECURE}}" >>  .env
+          echo "HASHING_SALT_ROUNDS=${{secrets.HASHING_SALT_ROUNDS}}" >>  .env
+          echo "SERVER_ADDRESS=${{secrets.STAGING_SERVER_ADDRESS}}" >>  .env
+            echo "SMTP_PORT=${{secrets.STAGING_SMTP_PORT}}" >>  .env
+            echo "SMTP_HOST=${{secrets.STAGING_SMTP_HOST}}" >>  .env
+            echo "SMTP_USERNAME=${{secrets.STAGING_SMTP_USERNAME}}" >>  .env
+            echo "SMTP_PASSWORD=${{secrets.STAGING_SMTP_PASSWORD}}" >>  .env
+            echo "SMTP_PORT=${{secrets.STAGING_SMTP_PORT}}" >>  .env
+            echo "SMTP_HOST=${{secrets.STAGING_SMTP_HOST}}" >>  .env
+            echo "SMTP_USERNAME=${{secrets.STAGING_SMTP_USERNAME}}" >>  .env
+            echo "SMTP_PASSWORD=${{secrets.STAGING_SMTP_PASSWORD}}" >>  .env
+            echo "SEND_EMAIL_FROM=${{secrets.STAGING_SEND_EMAIL_FROM}}" >>  .env
+            echo "SEND_WELCOME_EMAIL =${{secrets.STAGING_SEND_WELCOME_EMAIL }}" >>  .env
+            echo "CLOUDINARY_API_SECRET=${{secrets.STAGING_CLOUDINARY_API_SECRET}}" >>  .env
+            echo "CLOUDINARY_API_KEY=${{secrets.STAGING_CLOUDINARY_API_KEY}}" >>  .env
+            echo "CLOUDINARY_CLOUD_NAME=${{secrets.STAGING_CLOUDINARY_CLOUD_NAME}}" >>  .env
+            echo "TEST_MAIL_API_KEY=${{secrets.STAGING_TEST_MAIL_API_KEY}}" >>  .env
+            echo "TEST_MAIL_NAMESPACE=${{secrets.STAGING_TEST_MAIL_NAMESPACE}}" >>  .env
+            echo "JWT_SECRET=${{secrets.STAGING_JWT_SECRET}}" >>  .env
+            echo "AUTHENTICATION_SECRET=${{secrets.STAGING_AUTHENTICATION_SECRET}}" >>  .env
+            echo "OAUTH_REDIRECT_URI=${{secrets.STAGING_OAUTH_REDIRECT_URI}}" >>  .env
+            echo "OAUTH_FACEBOOK_KEY=${{secrets.STAGING_OAUTH_FACEBOOK_KEY}}" >>  .env
+            echo "OAUTH_FACEBOOK_SECRET=${{secrets.STAGING_OAUTH_FACEBOOK_SECRET}}" >>  .env
+            echo "OAUTH_GOOGLE_KEY=${{secrets.STAGING_OAUTH_GOOGLE_KEY}}" >>  .env
+            echo "OAUTH_GOOGLE_SECRET=${{secrets.STAGING_OAUTH_GOOGLE_SECRET}}" >>  .env
+            echo "OAUTH_GOOGLE_CALLBACK_URL=${{secrets.STAGING_OAUTH_GOOGLE_CALLBACK_URL}}" >>  .env
+            echo "HOST=${{secrets.STAGING_HOST}}" >>  .env
+            echo "FRONTEND_URL=${{secrets.STAGING_FRONTEND_URL}}" >>  .env
+            echo "API_PORT=${{secrets.STAGING_API_PORT}}" >>  .env
+            echo "API_HOST=${{secrets.STAGING_API_HOST}}" >>  .env
+            echo "DB_DATABASE=${{secrets.STAGING_DB_DATABASE}}" >>  .env
+            echo "DB_USER=${{secrets.STAGING_DB_USER}}" >>  .env
+            echo "DB_PASSWORD=${{secrets.STAGING_DB_PASSWORD}}" >>  .env
+            echo "DB_HOST=${{secrets.STAGING_DB_HOST}}" >>  .env
+            echo "NODE_ENV=${{secrets.STAGING_NODE_ENV}}" >>  .env
+            echo "REDIS_URL=${{secrets.STAGING_REDIS_URL}}" >>  .env
+            echo "DB_HOST_AUTH_METHOD=${{secrets.STAGING_DB_HOST_AUTH_METHOD}}" >>  .env
+            echo "maxPostVideos=${{secrets.STAGING_maxPostVideos}}" >>  .env
+            echo "maxPostAudios=${{secrets.STAGING_maxPostAudios}}" >>  .env
+            echo "maxPostImages=${{secrets.STAGING_maxPostImages}}" >>  .env
+            echo "maxMessageImages=${{secrets.STAGING_maxMessageImages}}" >>  .env
+            echo "maxDiscussionVideos=${{secrets.STAGING_maxDiscussionVideos}}" >>  .env
+            echo "maxDiscussionAudios=${{secrets.STAGING_maxDiscussionAudios}}" >>  .env
+            echo "maxDiscussionImages=${{secrets.STAGING_maxDiscussionImages}}" >>  .env
+      - name: Reading data from .env
+        run: cat .env
+
+      - name: Use NodeJS
+        if: github.event_name == 'pull_request'
+        uses: actions/setup-node@v1
+        with:
+          node-version: '16.6.1'
+
+      # - name: Cache dependencies
+      #   uses: actions/cache@v2
+      #   with:
+      #     path: ~/.npm
+      #     key: npm-${{ hashFiles('package-lock.json') }}
+      #     restore-keys: npm-
+      - name: Installing basic Dependencies
+        if: github.event_name == 'pull_request'
+        run: npm ci --ignore-scripts
+      - name: Installing all the dependencies
+        if: github.event_name == 'pull_request'
+        run: npm run install-all-deps
+      - name: Running docker
+        if: github.event_name == 'pull_request'
+        run: docker-compose -f docker-compose.react.yml up -d
+
+      - name: Check linting
+        if: github.event_name == 'pull_request'
+        run: npm run lint
+      - name: Testing 🥶
+        if: github.event_name == 'pull_request'
+        run: npm test
+        env:
+          CI: true
+      - name: Upload Test Coverage
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v1
+        with:
+          name: server-code-coverage
+          path: ./server/coverage
+
+      # - name: Build Project
+      #   if: github.event_name == 'pull_request'
+      #   run: npm run build
+      # - name: Upload server Build Folder
+      #   if: github.event_name == 'pull_request'
+      #   uses: actions/upload-artifact@v1
+      #   with:
+      #     name: server-build-folder
+      #     path: ./server/build
+      # - name: Upload client Build Folder
+      #   if: github.event_name == 'pull_request'
+      #   uses: actions/upload-artifact@v1
+      #   with:
+      #     name: client-build-folder
+      #     path: ./client/build
+      # - name: ZIP Assets
+      #   if: github.event_name == 'pull_request' && github.base_ref == 'master'
+      #   run: |
+      #     zip -r build.zip ./build
+      #     zip -r coverage.zip ./coverage
+      # - name: Create a Release
+      #   if: github.event_name == 'pull_request' && github.base_ref == 'master'
+      #   run: npx semantic-release
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.TOKEN }}
+
+      - name: Deploy to Staging
+        if: github.event_name == 'push' && github.ref == 'refs/heads/development'
+        uses: appleboy/ssh-action@v0.1.4
+        with:
+          host: ${{secrets.STAGING_SSH_HOST}}
+          key: ${{secrets.STAGING_SSH_KEY}}
+          username: ${{secrets.STAGING_SSH_USERNAME}}
+
+          script: |
+            cd vwanu
+            git pull
+            docker-compose -f docker-compose.nginx.yml up --build -d
+
+      - name: Deploy to Production
+        if: github.event_name == 'push' && github.base_ref == 'master'
+        run: echo deployed to production test
+      # - name: Upload Coverage Reports
+      #   if: github.event_name == 'push' && github.base_ref == 'master'
+      #   run: npx codecov
+      #   env:
+      #     CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      - name: Open Issue
+        if: failure() && github.event_name == 'pull_request'
+        run: |
+          curl --request POST \
+          --url https://api.github.com/repos/${{ github.repository }}/issues \
+          --header 'authorization: Bearer ${{ secrets.TOKEN }}' \
+          --header 'content-type: application/json' \
+          --data '{
+            "title": "Automated issue for commit: ${{ github.sha }}",
+            "body": "This issue was automatically created by the GitHub Action workflow **${{ github.workflow }}**. \n\n The commit hash was: _${{ github.sha }}_.",
+            "assignees": ["${{ github.event.pull_request.user.login }}"]
+            }'
