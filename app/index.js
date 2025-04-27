@@ -77,6 +77,33 @@ app.get('/fizzbuzz/:count', (req, res) => {
   });
 });
 
+// Random quotes endpoint
+app.get('/quotes/random', (req, res) => {
+  const quotes = [
+    { text: "Life is what happens when you're busy making other plans.", author: "John Lennon" },
+    { text: "The way to get started is to quit talking and begin doing.", author: "Walt Disney" },
+    { text: "Your time is limited, so don't waste it living someone else's life.", author: "Steve Jobs" },
+    { text: "If life were predictable it would cease to be life, and be without flavor.", author: "Eleanor Roosevelt" },
+    { text: "Spread love everywhere you go. Let no one ever come to you without leaving happier.", author: "Mother Teresa" },
+    { text: "The future belongs to those who believe in the beauty of their dreams.", author: "Eleanor Roosevelt" },
+    { text: "It is during our darkest moments that we must focus to see the light.", author: "Aristotle" },
+    { text: "Whoever is happy will make others happy too.", author: "Anne Frank" },
+    { text: "Do not go where the path may lead, go instead where there is no path and leave a trail.", author: "Ralph Waldo Emerson" },
+    { text: "The greatest glory in living lies not in never falling, but in rising every time we fall.", author: "Nelson Mandela" }
+  ];
+  
+  // Get a random quote
+  const randomIndex = Math.floor(Math.random() * quotes.length);
+  const randomQuote = quotes[randomIndex];
+  
+  // Add a deployment timestamp to verify version
+  res.json({
+    quote: randomQuote,
+    version: "1.0",
+    deployedAt: new Date().toISOString()
+  });
+});
+
 // Get all items
 app.get('/api/items', async (req, res) => {
   try {

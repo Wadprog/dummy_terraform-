@@ -130,3 +130,7 @@ jobs:
           # Test the FizzBuzz endpoint
           echo "Testing FizzBuzz endpoint at http://$ALB_DNS/fizzbuzz/15"
           curl -s http://$ALB_DNS/fizzbuzz/15
+          
+          # Test the new Random Quotes endpoint
+          echo "Testing Random Quotes endpoint at http://$ALB_DNS/quotes/random"
+          curl -s http://$ALB_DNS/quotes/random
