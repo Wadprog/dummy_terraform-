@@ -1,135 +1,132 @@
-name: Deploy Infrastructure and Application
-
+name: Deploy
+run-name: Deploy to ${{ inputs.environment }} by @${{ github.actor }}
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
-
-permissions:
-  contents: read
-  id-token: write
-
-env:
-  AWS_REGION: us-east-1
-  ECR_REPOSITORY: api-vwn-repository
-  TF_VERSION: 1.2.0
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        type: choice
+        options:
+          - Development
+          - Production
 
 jobs:
-  deploy-infrastructure:
-    name: Deploy Infrastructure
-    runs-on: ubuntu-latest
+
+  build-and-push:
+    runs-on: ubuntu-22.04
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - name: Terraform Init
-        working-directory: ./infra
-        run: terraform init
-
-      - name: Terraform Validate
-        working-directory: ./infra
-        run: terraform validate
-
-      - name: Terraform Plan
-        working-directory: ./infra
-        run: terraform plan -var="db_password=${{ secrets.DB_PASSWORD }}"
-
-      - name: Terraform Apply
-        working-directory: ./infra
-        run: terraform apply -auto-approve -var="db_password=${{ secrets.DB_PASSWORD }}"
-
-      - name: Get ECR Repository URL
-        working-directory: ./infra
-        id: get-ecr-url
+      - name: Set environment variable based on input
+        id: set_env
         run: |
-          ECR_REPOSITORY_URL=$(terraform output -raw ecr_repository_url)
-          echo "ECR_REPOSITORY_URL=$ECR_REPOSITORY_URL" >> $GITHUB_OUTPUT
+          case "${{ inputs.environment }}" in
+            "Production")
+              echo "STAGE=prod" >> $GITHUB_ENV
+              ;;
+            "Development")
+              echo "STAGE=Development" >> $GITHUB_ENV
+              ;;
+          esac
 
-      - name: Get ALB DNS Name
-        working-directory: ./infra
-        id: get-alb-dns
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Set Node.js 20.12.2
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.12.2
+          cache: yarn
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: yarn
+        
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+          
+      - name: Login to ECR
+        id: login-to-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Docker image, tag and push to ECR
         run: |
-          ALB_DNS_NAME=$(terraform output -raw alb_dns_name)
-          echo "ALB_DNS_NAME=$ALB_DNS_NAME" >> $GITHUB_OUTPUT
-
-  build-and-deploy-app:
-    name: Build and Deploy Application
-    needs: deploy-infrastructure
-    runs-on: ubuntu-latest
+          IMAGE_TAG="${{ github.sha }}"
+          docker build -t ${{ secrets.ECR_REPOSITORY }}:$IMAGE_TAG .
+          docker push ${{ secrets.ECR_REPOSITORY }}:$IMAGE_TAG
+       aws ecs update-service --cluster ${{ secrets.ECS_CLUSTER }} --service ${{ secrets.ECS_SERVICE }} --task-definition $NEW_TASK_DEF_ARN
+  Deploy:
+    needs: build-and-push
+    runs-on: ubuntu-22.04
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+      - name: Checkout source code
+        uses: actions/checkout@v4
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Install Jq 
+        run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
-
-      - name: Get ECR Repository URL
-        working-directory: ./infra
-        id: get-ecr-url
+      - name: Get RDS Endpoint
+        id: get-rds-endpoint
         run: |
-          terraform init -backend=false
-          ECR_REPOSITORY_URL=$(terraform output -raw ecr_repository_url)
-          echo "ECR_REPOSITORY_URL=$ECR_REPOSITORY_URL" >> $GITHUB_OUTPUT
+          RDS_ENDPOINT=$(aws rds describe-db-instances --db-instance-identifier ${{ vars.RDS_INSTANCE_ID }} --query 'DBInstances[0].Endpoint.Address' --output text)
+          echo "RDS_ENDPOINT=$RDS_ENDPOINT" >> $GITHUB_OUTPUT
 
-      - name: Build, tag, and push image to Amazon ECR
-        working-directory: ./app
-        env:
-          ECR_REPOSITORY_URL: ${{ steps.get-ecr-url.outputs.ECR_REPOSITORY_URL }}
-          IMAGE_TAG: ${{ github.sha }}
+      - name: Deploy to ECS
         run: |
-          docker build --platform linux/amd64 -t $ECR_REPOSITORY_URL:$IMAGE_TAG -t $ECR_REPOSITORY_URL:latest .
-          docker push $ECR_REPOSITORY_URL:$IMAGE_TAG
-          docker push $ECR_REPOSITORY_URL:latest
-          echo "::set-output name=image::$ECR_REPOSITORY_URL:$IMAGE_TAG"
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition ${{ vars.ECS_TASK_DEFINITION_STAGING }} --region ${{ vars.AWS_REGION }})
+          
+          # Update image and add DB connection environment variables
+          NEW_TASK_DEF=$(echo "$TASK_DEF" | jq --arg IMAGE "${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}" \
+                                             --arg DB_HOST "${{ steps.get-rds-endpoint.outputs.RDS_ENDPOINT }}" \
+                                             --arg DB_NAME "${{ secrets.DB_NAME }}" \
+                                             --arg DB_USER "${{ secrets.DB_USERNAME }}" \
+                                             '.taskDefinition | 
+                                             .containerDefinitions[0].image = $IMAGE | 
+                                             .containerDefinitions[0].environment += [
+                                               {"name": "DB_HOST", "value": $DB_HOST},
+                                               {"name": "DB_NAME", "value": $DB_NAME},
+                                               {"name": "DB_USER", "value": $DB_USER},
+                                               {"name": "NODE_ENV", "value": "production"}
+                                             ] |
+                                             del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
+          
+          # Register new task definition
+          NEW_TASK_RESP=$(aws ecs register-task-definition --region ${{ vars.AWS_REGION }} --cli-input-json "$NEW_TASK_DEF")
+          NEW_REVISION=$(echo "$NEW_TASK_RESP" | jq -r '.taskDefinition.family + ":" + (.taskDefinition.revision | tostring)')
+          
+          # Update the service to use the new task definition
+          aws ecs update-service --cluster ${{ vars.ECS_CLUSTER_STAGING }} --service ${{ vars.ECS_SERVICE_STAGING }} --task-definition "$NEW_REVISION" --region ${{ vars.AWS_REGION }}
+          
+          # Wait for service to stabilize
+          aws ecs wait services-stable --cluster ${{ vars.ECS_CLUSTER_STAGING }} --services ${{ vars.ECS_SERVICE_STAGING }} --region ${{ vars.AWS_REGION }}
 
-      - name: Force new deployment of ECS service
+      - name: Verify Deployment
         run: |
-          aws ecs update-service --cluster api-vwn-cluster --service api-vwn-service --force-new-deployment
-
-      - name: Wait for service to be stable
-        run: |
-          aws ecs wait services-stable --cluster api-vwn-cluster --services api-vwn-service
-
-  verify-deployment:
-    name: Verify Deployment
-    needs: build-and-deploy-app
-    runs-on: ubuntu-latest
-    steps:
-      - name: Get ALB DNS Name
-        working-directory: ./infra
-        id: get-alb-dns
-        run: |
-          terraform init -backend=false
-          ALB_DNS_NAME=$(terraform output -raw alb_dns_name)
-          echo "ALB_DNS_NAME=$ALB_DNS_NAME" >> $GITHUB_OUTPUT
-
-      - name: Check health endpoint
-        run: |
+          # Get the ALB DNS name from the service
+          ALB_DNS=$(aws ecs describe-services --cluster ${{ vars.ECS_CLUSTER_STAGING }} --services ${{ vars.ECS_SERVICE_STAGING }} \
+                   --query 'services[0].loadBalancers[0].targetGroupArn' --output text | \
+                   xargs -I {} aws elbv2 describe-target-groups --target-group-arns {} \
+                   --query 'TargetGroups[0].LoadBalancerArns[0]' --output text | \
+                   xargs -I {} aws elbv2 describe-load-balancers --load-balancer-arns {} \
+                   --query 'LoadBalancers[0].DNSName' --output text)
+          
           # Wait for ALB to be available
-          sleep 60
-          # Check health endpoint
-          curl -s --retry 10 --retry-delay 10 http://${{ steps.get-alb-dns.outputs.ALB_DNS_NAME }}/health
-      
-      - name: Check FizzBuzz endpoint
-        run: |
-          # Check FizzBuzz endpoint
-          curl -s http://${{ steps.get-alb-dns.outputs.ALB_DNS_NAME }}/fizzbuzz/15 
+          echo "Testing health endpoint at http://$ALB_DNS/health"
+          sleep 30
+          curl -s --retry 5 --retry-delay 10 http://$ALB_DNS/health
+          
+          # Test the FizzBuzz endpoint
+          echo "Testing FizzBuzz endpoint at http://$ALB_DNS/fizzbuzz/15"
+          curl -s http://$ALB_DNS/fizzbuzz/15
